@@ -1034,6 +1034,33 @@ export const useChatStore = createPersistStore(
             );
           }
         }, 1500);
+
+        // 启动定期刷新机制：每 10 秒检查当前 Qoder session 是否有新消息
+        setInterval(async () => {
+          const state = useChatStore.getState();
+          const currentSession = state.sessions.at(state.currentSessionIndex);
+
+          if (currentSession?.id?.startsWith("qoder-")) {
+            const { checkSessionNeedsRefresh, refreshQoderSession } =
+              await import("./qoder-sync");
+            const needsRefresh = await checkSessionNeedsRefresh(currentSession);
+
+            if (needsRefresh) {
+              console.log(
+                `[QoderSync] Auto-refreshing session ${currentSession.id}`,
+              );
+              const messages = await refreshQoderSession(currentSession.id);
+              if (messages) {
+                state.updateTargetSession(currentSession, (s) => {
+                  s.messages = messages.map((m) =>
+                    createMessage({ role: m.role as any, content: m.content }),
+                  );
+                  s.lastUpdate = Date.now();
+                });
+              }
+            }
+          }
+        }, 10000); // 10 秒检查一次
       }
     },
   },

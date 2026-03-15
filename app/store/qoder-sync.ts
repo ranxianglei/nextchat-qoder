@@ -194,3 +194,20 @@ export async function checkSessionNeedsRefresh(
     return false;
   }
 }
+
+/**
+ * 获取单个 session 的最新信息
+ */
+export async function fetchQoderSessionInfo(
+  sessionId: string,
+): Promise<QoderSession | null> {
+  if (!sessionId.startsWith("qoder-")) return null;
+
+  const qoderId = sessionId.slice(6);
+  try {
+    const sessions = await fetchQoderSessions();
+    return sessions.find((s) => s.id === qoderId) || null;
+  } catch (e) {
+    return null;
+  }
+}
