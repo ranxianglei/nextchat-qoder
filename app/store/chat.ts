@@ -1089,7 +1089,9 @@ export const useChatStore = createPersistStore(
                             id: m.id,
                             role: m.role as any,
                             content: m.content,
-                            date: m.timestamp,
+                            date: m.timestamp
+                              ? new Date(m.timestamp).toLocaleString()
+                              : new Date().toLocaleString(),
                           }),
                         ),
                       ];
