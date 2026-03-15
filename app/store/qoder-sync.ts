@@ -139,18 +139,27 @@ export async function syncQoderSessions(
 
 /**
  * 刷新指定 session 的消息（从 Qoder 拉取最新）
+ * 返回增量更新的新消息列表
  */
 export async function refreshQoderSession(
   sessionId: string,
+  currentMessageCount: number = 0,
 ): Promise<QoderMessage[] | null> {
   if (!sessionId.startsWith("qoder-")) return null;
 
   const qoderId = sessionId.slice(6);
-  const { messages, total } = await fetchQoderTranscript(qoderId, 0); // 加载全部
+
+  // 如果已有消息，只请求增量（从第 N 条开始）
+  const { messages, total } = await fetchQoderTranscript(
+    qoderId,
+    currentMessageCount > 0 ? currentMessageCount : 0,
+  );
 
   console.log(
-    `[QoderSync] Refreshed session ${qoderId}: ${messages.length}/${total} messages`,
+    `[QoderSync] Refreshed session ${qoderId}: got ${messages.length} new messages, total ${total}`,
   );
+
+  // 返回新消息（增量）
   return messages;
 }
 

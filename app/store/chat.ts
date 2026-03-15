@@ -1056,16 +1056,48 @@ export const useChatStore = createPersistStore(
                 console.log(
                   `[QoderSync] Auto-refreshing session ${currentSession.id}`,
                 );
-                const messages = await refreshQoderSession(currentSession.id);
-                if (messages) {
+                const newMessages = await refreshQoderSession(
+                  currentSession.id,
+                  currentSession.messages.length,
+                );
+                if (newMessages && newMessages.length > 0) {
                   state.updateTargetSession(currentSession, (s) => {
-                    s.messages = messages.map((m) =>
-                      createMessage({
-                        role: m.role as any,
-                        content: m.content,
-                      }),
+                    // 增量更新：只添加新消息，避免整体闪烁
+                    const existingIds = new Set(
+                      s.messages.map((m) => m.id).filter(Boolean),
                     );
-                    s.lastUpdate = Date.now();
+                    const existingLastMsg =
+                      s.messages.length > 0
+                        ? s.messages[s.messages.length - 1].content
+                        : "";
+
+                    // 找出真正新增的消息
+                    const trulyNewMessages = newMessages.filter((m: any) => {
+                      // 如果有 ID，用 ID 判断
+                      if (m.id && existingIds.has(m.id)) return false;
+                      // 如果是最后一条消息内容相同，跳过
+                      if (m.content === existingLastMsg) return false;
+                      return true;
+                    });
+
+                    if (trulyNewMessages.length > 0) {
+                      // 只追加新消息
+                      s.messages = [
+                        ...s.messages,
+                        ...trulyNewMessages.map((m: any) =>
+                          createMessage({
+                            id: m.id,
+                            role: m.role as any,
+                            content: m.content,
+                            date: m.timestamp,
+                          }),
+                        ),
+                      ];
+                      s.lastUpdate = Date.now();
+                      console.log(
+                        `[QoderSync] Appended ${trulyNewMessages.length} new messages`,
+                      );
+                    }
                   });
                 }
               }
