@@ -41,15 +41,23 @@ export async function fetchQoderSessions(): Promise<QoderSession[]> {
 
 /**
  * 从 bridge 获取指定 session 的 transcript
+ * @param sessionId 会话 ID
+ * @param offset 跳过前 N 条消息（用于增量获取）
+ * @param limit 限制返回数量
  */
 export async function fetchQoderTranscript(
   sessionId: string,
+  offset: number = 0,
   limit: number = 0,
 ): Promise<{ messages: QoderMessage[]; total: number }> {
   try {
+    const params = new URLSearchParams();
+    if (offset > 0) params.set("offset", String(offset));
+    if (limit !== 0) params.set("limit", String(limit));
+
     const url = `${BRIDGE_BASE_URL}/api/qoder-sessions/${encodeURIComponent(
       sessionId,
-    )}/transcript?limit=${limit}`;
+    )}/transcript?${params.toString()}`;
     const res = await fetch(url);
     if (!res.ok) return { messages: [], total: 0 };
     const data = await res.json();
@@ -125,7 +133,7 @@ export async function syncQoderSessions(
 
   for (const qoder of toImport) {
     if (qoder.has_transcript) {
-      const { messages } = await fetchQoderTranscript(qoder.id, 50);
+      const { messages } = await fetchQoderTranscript(qoder.id, 0, 50);
       const session = convertQoderToChatSession(qoder, messages);
       newSessions.push(session);
       console.log(
@@ -153,6 +161,7 @@ export async function refreshQoderSession(
   const { messages, total } = await fetchQoderTranscript(
     qoderId,
     currentMessageCount > 0 ? currentMessageCount : 0,
+    0, // 不限制数量
   );
 
   console.log(
