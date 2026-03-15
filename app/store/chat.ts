@@ -1041,22 +1041,33 @@ export const useChatStore = createPersistStore(
           const currentSession = state.sessions.at(state.currentSessionIndex);
 
           if (currentSession?.id?.startsWith("qoder-")) {
-            const { checkSessionNeedsRefresh, refreshQoderSession } =
-              await import("./qoder-sync");
-            const needsRefresh = await checkSessionNeedsRefresh(currentSession);
+            // 检查是否有 pending 消息（正在发送或接收）
+            const hasPendingMessages = currentSession.messages.some(
+              (msg) => msg.streaming || msg.content === "" || !msg.date,
+            );
 
-            if (needsRefresh) {
-              console.log(
-                `[QoderSync] Auto-refreshing session ${currentSession.id}`,
-              );
-              const messages = await refreshQoderSession(currentSession.id);
-              if (messages) {
-                state.updateTargetSession(currentSession, (s) => {
-                  s.messages = messages.map((m) =>
-                    createMessage({ role: m.role as any, content: m.content }),
-                  );
-                  s.lastUpdate = Date.now();
-                });
+            if (!hasPendingMessages) {
+              const { checkSessionNeedsRefresh, refreshQoderSession } =
+                await import("./qoder-sync");
+              const needsRefresh =
+                await checkSessionNeedsRefresh(currentSession);
+
+              if (needsRefresh) {
+                console.log(
+                  `[QoderSync] Auto-refreshing session ${currentSession.id}`,
+                );
+                const messages = await refreshQoderSession(currentSession.id);
+                if (messages) {
+                  state.updateTargetSession(currentSession, (s) => {
+                    s.messages = messages.map((m) =>
+                      createMessage({
+                        role: m.role as any,
+                        content: m.content,
+                      }),
+                    );
+                    s.lastUpdate = Date.now();
+                  });
+                }
               }
             }
           }
