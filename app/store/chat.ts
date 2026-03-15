@@ -7,6 +7,12 @@ import {
 
 import { indexedDBStorage } from "@/app/utils/indexedDB-storage";
 import { nanoid } from "nanoid";
+import {
+  syncQoderSessions,
+  refreshQoderSession,
+  deleteQoderSession,
+  checkSessionNeedsRefresh,
+} from "./qoder-sync";
 import type {
   ClientApi,
   MultimodalContent,
@@ -63,7 +69,20 @@ export type ChatMessage = RequestMessage & {
   tools?: ChatMessageTool[];
   audio_url?: string;
   isMcpResponse?: boolean;
+  toolEvents?: ToolEvent[]; // Qoder 工具调用事件
 };
+
+// Qoder 工具调用事件类型
+export interface ToolEvent {
+  type: "tool_call" | "tool_call_update";
+  toolCallId: string;
+  title?: string;
+  status: "pending" | "in_progress" | "completed" | "error";
+  kind?: string;
+  rawInput?: any;
+  content?: any;
+  rawOutput?: string;
+}
 
 export function createMessage(override: Partial<ChatMessage>): ChatMessage {
   return {
@@ -274,6 +293,46 @@ export const useChatStore = createPersistStore(
       },
 
       selectSession(index: number) {
+        const session = get().sessions.at(index);
+
+        // 更新 qoder_session cookie，确保 API 请求使用正确的 session ID
+        if (typeof window !== "undefined" && session?.id) {
+          if (session.id.startsWith("qoder-")) {
+            // Qoder session：提取 ID（去掉 "qoder-" 前缀）
+            const qoderSessionId = session.id.slice(6);
+            document.cookie = `qoder_session=${qoderSessionId}; path=/; SameSite=Lax`;
+            console.log(
+              `[QoderSync] Updated qoder_session cookie to Qoder session: ${qoderSessionId}`,
+            );
+          } else {
+            // 非 Qoder session：使用 "nextchat-" 前缀 + 会话 ID，确保 Bridge 能复用同一个 session
+            const sessionId = `nextchat-${session.id}`;
+            document.cookie = `qoder_session=${sessionId}; path=/; SameSite=Lax`;
+            console.log(
+              `[QoderSync] Updated qoder_session cookie to local session: ${sessionId}`,
+            );
+          }
+        }
+
+        // 如果是 Qoder session，检查是否需要刷新
+        if (session?.id.startsWith("qoder-")) {
+          setTimeout(async () => {
+            const needsRefresh = await checkSessionNeedsRefresh(session);
+            if (needsRefresh) {
+              console.log(`[QoderSync] Refreshing session ${session.id}`);
+              const messages = await refreshQoderSession(session.id);
+              if (messages) {
+                get().updateTargetSession(session, (s) => {
+                  s.messages = messages.map((m) =>
+                    createMessage({ role: m.role as any, content: m.content }),
+                  );
+                  s.lastUpdate = Date.now();
+                });
+              }
+            }
+          }, 100);
+        }
+
         set({
           currentSessionIndex: index,
         });
@@ -339,6 +398,11 @@ export const useChatStore = createPersistStore(
         const deletedSession = get().sessions.at(index);
 
         if (!deletedSession) return;
+
+        // 如果是 Qoder session，同步删除 Qoder 文件
+        if (deletedSession.id.startsWith("qoder-")) {
+          deleteQoderSession(deletedSession.id);
+        }
 
         const sessions = get().sessions.slice();
         sessions.splice(index, 1);
@@ -491,6 +555,25 @@ export const useChatStore = createPersistStore(
                 tools[i] = { ...tool };
               }
             });
+            get().updateTargetSession(session, (session) => {
+              session.messages = session.messages.concat();
+            });
+          },
+          // Qoder 工具事件回调
+          onToolEvent(event: ToolEvent) {
+            botMessage.toolEvents = botMessage.toolEvents || [];
+            // 更新或添加事件
+            const existingIndex = botMessage.toolEvents.findIndex(
+              (e) => e.toolCallId === event.toolCallId,
+            );
+            if (existingIndex >= 0) {
+              botMessage.toolEvents[existingIndex] = {
+                ...botMessage.toolEvents[existingIndex],
+                ...event,
+              };
+            } else {
+              botMessage.toolEvents.push(event);
+            }
             get().updateTargetSession(session, (session) => {
               session.messages = session.messages.concat();
             });
@@ -714,12 +797,16 @@ export const useChatStore = createPersistStore(
             },
             onFinish(message, responseRes) {
               if (responseRes?.status === 200) {
-                get().updateTargetSession(
-                  session,
-                  (session) =>
-                    (session.topic =
-                      message.length > 0 ? trimTopic(message) : DEFAULT_TOPIC),
-                );
+                get().updateTargetSession(session, (session) => {
+                  let topic =
+                    message.length > 0 ? trimTopic(message) : DEFAULT_TOPIC;
+                  // 如果标题过长（超过 30 字符），说明模型返回了描述而非标题
+                  // 截取前 20 个字符作为标题
+                  if (topic.length > 30) {
+                    topic = topic.slice(0, 20) + "...";
+                  }
+                  session.topic = topic;
+                });
               }
             },
           });
@@ -926,6 +1013,28 @@ export const useChatStore = createPersistStore(
       }
 
       return newState as any;
+    },
+    onRehydrateStorage: () => {
+      // 从 IndexedDB 恢复后，同步 Qoder sessions
+      if (typeof window !== "undefined") {
+        setTimeout(async () => {
+          console.log("[QoderSync] Starting initial sync...");
+          // 必须用 useChatStore.getState() 获取最新 state，
+          // onRehydrateStorage 的 state 参数在 setTimeout 后已过期
+          const currentSessions = useChatStore.getState().sessions;
+          const newSessions = await syncQoderSessions(currentSessions);
+          if (newSessions.length > 0) {
+            const latest = useChatStore.getState().sessions;
+            useChatStore.setState({
+              sessions: [...latest, ...newSessions],
+              lastUpdateTime: Date.now(),
+            } as any);
+            console.log(
+              `[QoderSync] Added ${newSessions.length} sessions from Qoder`,
+            );
+          }
+        }, 1500);
+      }
     },
   },
 );

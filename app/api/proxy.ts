@@ -33,17 +33,24 @@ export async function handle(
       return true;
     }),
   );
+
+  // 从 cookie 中读取 qoder_session，注入为 x-session-id
+  // 这样会话管理面板设置的 cookie 就能透传给 bridge
+  const qoderSession = req.cookies.get("qoder_session")?.value;
+  if (qoderSession) {
+    headers.set("x-session-id", qoderSession);
+  }
   // if dalle3 use openai api key
-    const baseUrl = req.headers.get("x-base-url");
-    if (baseUrl?.includes("api.openai.com")) {
-      if (!serverConfig.apiKey) {
-        return NextResponse.json(
-          { error: "OpenAI API key not configured" },
-          { status: 500 },
-        );
-      }
-      headers.set("Authorization", `Bearer ${serverConfig.apiKey}`);
+  const baseUrl = req.headers.get("x-base-url");
+  if (baseUrl?.includes("api.openai.com")) {
+    if (!serverConfig.apiKey) {
+      return NextResponse.json(
+        { error: "OpenAI API key not configured" },
+        { status: 500 },
+      );
     }
+    headers.set("Authorization", `Bearer ${serverConfig.apiKey}`);
+  }
 
   const controller = new AbortController();
   const fetchOptions: RequestInit = {

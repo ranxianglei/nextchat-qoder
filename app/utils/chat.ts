@@ -402,6 +402,7 @@ export function streamWithThink(
   ) => {
     isThinking: boolean;
     content: string | undefined;
+    toolEvent?: any; // Qoder 工具事件
   },
   processToolMessage: (
     requestPayload: any,
@@ -594,6 +595,13 @@ export function streamWithThink(
         }
         try {
           const chunk = parseSSE(text, runTools);
+
+          // 处理工具事件（Qoder ACP）
+          if (chunk?.toolEvent) {
+            options?.onToolEvent?.(chunk.toolEvent);
+            return;
+          }
+
           // Skip if content is empty
           if (!chunk?.content || chunk.content.length === 0) {
             return;

@@ -9,6 +9,7 @@ interface Commands {
   mask?: Command;
   code?: Command;
   settings?: Command;
+  new?: Command; // ?new=1 → 强制开新会话，清除 NextChat 本地历史
 }
 
 export function useCommand(commands: Commands = {}) {
