@@ -83,6 +83,7 @@ export interface ChatOptions {
   onController?: (controller: AbortController) => void;
   onBeforeTool?: (tool: ChatMessageTool) => void;
   onAfterTool?: (tool: ChatMessageTool) => void;
+  onToolEvent?: (event: any) => void; // Qoder 工具事件回调
 }
 
 export interface LLMUsage {

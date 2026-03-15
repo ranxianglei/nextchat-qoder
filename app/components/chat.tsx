@@ -1487,7 +1487,37 @@ function _Chat() {
         console.error("[Command] failed to get settings from url: ", text);
       }
     },
+    // ?new=1 由会话管理面板注入，表示切换到新 server session，清除 NextChat 本地历史
+    new: (_) => {
+      chatStore.newSession();
+    },
   });
+
+  // 接收会话管理面板通过 postMessage 注入的服务端历史记录
+  useEffect(() => {
+    const handler = (e: MessageEvent) => {
+      if (e.data?.type !== "qoder-load-history") return;
+      const msgs = e.data.messages;
+      if (!Array.isArray(msgs) || msgs.length === 0) return;
+
+      const replace = e.data.replace === true;
+
+      chatStore.updateTargetSession(session, (s) => {
+        // replace=true 时强制替换，否则仅在空会话时注入
+        if (!replace && s.messages.length > 0) return;
+        s.messages = msgs.map((m: { role: string; content: string }) =>
+          createMessage({ role: m.role as any, content: m.content }),
+        );
+        // 用首条用户消息作为 topic
+        const firstUser = msgs.find((m: any) => m.role === "user");
+        if (firstUser && (!s.topic || s.topic === "New Conversation")) {
+          s.topic = firstUser.content.slice(0, 30);
+        }
+      });
+    };
+    window.addEventListener("message", handler);
+    return () => window.removeEventListener("message", handler);
+  }, [session, chatStore]);
 
   // edit / insert message modal
   const [isEditingMessage, setIsEditingMessage] = useState(false);
@@ -1964,6 +1994,40 @@ function _Chat() {
                                   <span>{tool?.function?.name}</span>
                                 </div>
                               ))}
+                            </div>
+                          )}
+                          {/* Qoder 工具事件显示 */}
+                          {/*@ts-ignore*/}
+                          {message?.toolEvents?.length > 0 && (
+                            <div className={styles["chat-message-tools"]}>
+                              {message?.toolEvents?.map(
+                                (event: any, idx: number) => (
+                                  <div
+                                    key={event.toolCallId || idx}
+                                    className={styles["chat-message-tool"]}
+                                    title={
+                                      event.rawInput
+                                        ? JSON.stringify(
+                                            event.rawInput,
+                                            null,
+                                            2,
+                                          )
+                                        : undefined
+                                    }
+                                  >
+                                    {event.status === "completed" ? (
+                                      <ConfirmIcon />
+                                    ) : event.status === "error" ? (
+                                      <CloseIcon />
+                                    ) : (
+                                      <LoadingButtonIcon />
+                                    )}
+                                    <span>
+                                      {event.title || event.kind || "Tool"}
+                                    </span>
+                                  </div>
+                                ),
+                              )}
                             </div>
                           )}
                           <div className={styles["chat-message-item"]}>

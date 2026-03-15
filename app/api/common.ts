@@ -90,6 +90,10 @@ export async function requestOpenai(req: NextRequest) {
 
   const fetchUrl = cloudflareAIGatewayUrl(`${baseUrl}/${path}`);
   console.log("fetchUrl", fetchUrl);
+  // 从 qoder_session cookie 注入 x-session-id，确保会话路由正确
+  // 注意：非流式请求（如标题生成、摘要）不注入 session，避免经过 Qoder 系统提示
+  const qoderSession = req.cookies.get("qoder_session")?.value;
+
   const fetchOptions: RequestInit = {
     headers: {
       "Content-Type": "application/json",
@@ -98,6 +102,7 @@ export async function requestOpenai(req: NextRequest) {
       ...(serverConfig.openaiOrgId && {
         "OpenAI-Organization": serverConfig.openaiOrgId,
       }),
+      ...(qoderSession && { "x-session-id": qoderSession }),
     },
     method: req.method,
     body: req.body,
@@ -109,15 +114,29 @@ export async function requestOpenai(req: NextRequest) {
   };
 
   // #1815 try to refuse gpt4 request
-  if (serverConfig.customModels && req.body) {
+  // 同时解析 body 判断 stream 属性，非流式请求不注入 x-session-id
+  if (req.body) {
     try {
       const clonedBody = await req.text();
       fetchOptions.body = clonedBody;
 
-      const jsonBody = JSON.parse(clonedBody) as { model?: string };
+      const jsonBody = JSON.parse(clonedBody) as {
+        model?: string;
+        stream?: boolean;
+      };
+
+      // 非流式请求（标题生成、摘要等）不注入 x-session-id，避免经过 Qoder 会话上下文
+      if (jsonBody?.stream === false && fetchOptions.headers) {
+        const h = fetchOptions.headers as Record<string, string>;
+        delete h["x-session-id"];
+        console.log(
+          "[Proxy] non-streaming request, skipping x-session-id injection",
+        );
+      }
 
       // not undefined and is false
       if (
+        serverConfig.customModels &&
         isModelNotavailableInServer(
           serverConfig.customModels,
           jsonBody?.model as string,
