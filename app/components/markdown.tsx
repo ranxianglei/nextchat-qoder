@@ -289,6 +289,22 @@ function _MarkDownContent(props: { content: string }) {
         pre: PreCode,
         code: CustomCode,
         p: (pProps) => <p {...pProps} dir="auto" />,
+        img: (imgProps) => {
+          const src = imgProps.src || "";
+          return (
+            <img
+              {...imgProps}
+              style={{
+                maxWidth: "100%",
+                maxHeight: "400px",
+                borderRadius: "8px",
+                cursor: "pointer",
+                objectFit: "contain",
+              }}
+              onClick={() => showImageModal(src)}
+            />
+          );
+        },
         a: (aProps) => {
           const href = aProps.href || "";
           if (/\.(aac|mp3|opus|wav)$/.test(href)) {

@@ -123,9 +123,9 @@ export async function syncQoderSessions(
 
   const newSessions: ChatSession[] = [];
 
-  // 只导入有实质内容的 session（>= 4 条消息），避免大量空会话
+  // 只导入有实质内容的 session（>= 2 条消息），避免大量空会话
   const meaningful = qoderSessions.filter(
-    (s) => s.message_count >= 4 && !existingQoderIds.has(s.id),
+    (s) => s.message_count >= 2 && !existingQoderIds.has(s.id),
   );
 
   // 最多一次导入 20 个 session，按更新时间倒序（API 已排序）
@@ -133,7 +133,10 @@ export async function syncQoderSessions(
 
   for (const qoder of toImport) {
     if (qoder.has_transcript) {
-      const { messages } = await fetchQoderTranscript(qoder.id, 0, 50);
+      // 对于消息数少的会话，获取完整消息（包含 tool events）
+      // 对于消息数多的会话，限制为 100 条
+      const limit = qoder.message_count <= 100 ? 0 : 100;
+      const { messages } = await fetchQoderTranscript(qoder.id, 0, limit);
       const session = convertQoderToChatSession(qoder, messages);
       newSessions.push(session);
       console.log(
@@ -157,18 +160,25 @@ export async function refreshQoderSession(
 
   const qoderId = sessionId.slice(6);
 
-  // 如果已有消息，只请求增量（从第 N 条开始）
+  // 消息数 <= 30 的会话使用全量刷新（包含 tool events）
+  // 大于 30 的使用增量刷新
+  const useFullRefresh = currentMessageCount <= 30;
+
   const { messages, total } = await fetchQoderTranscript(
     qoderId,
-    currentMessageCount > 0 ? currentMessageCount : 0,
+    useFullRefresh ? 0 : currentMessageCount, // 全量或增量
     0, // 不限制数量
   );
 
   console.log(
-    `[QoderSync] Refreshed session ${qoderId}: got ${messages.length} new messages, total ${total}`,
+    `[QoderSync] Refreshed session ${qoderId}: got ${
+      messages.length
+    } messages (mode: ${
+      useFullRefresh ? "full" : "incremental"
+    }), total ${total}`,
   );
 
-  // 返回新消息（增量）
+  // 返回消息（如果是全量刷新，返回全部；如果是增量，返回新消息）
   return messages;
 }
 

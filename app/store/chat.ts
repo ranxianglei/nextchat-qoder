@@ -1019,9 +1019,18 @@ export const useChatStore = createPersistStore(
       if (typeof window !== "undefined") {
         setTimeout(async () => {
           console.log("[QoderSync] Starting initial sync...");
+
+          // 等待更长时间确保 IndexedDB 完全恢复
+          await new Promise((r) => setTimeout(r, 2000));
+
           // 必须用 useChatStore.getState() 获取最新 state，
           // onRehydrateStorage 的 state 参数在 setTimeout 后已过期
           const currentSessions = useChatStore.getState().sessions;
+          console.log(
+            `[QoderSync] Current sessions: ${currentSessions.length}`,
+          );
+
+          // 1. 导入新会话
           const newSessions = await syncQoderSessions(currentSessions);
           if (newSessions.length > 0) {
             const latest = useChatStore.getState().sessions;
@@ -1030,10 +1039,51 @@ export const useChatStore = createPersistStore(
               lastUpdateTime: Date.now(),
             } as any);
             console.log(
-              `[QoderSync] Added ${newSessions.length} sessions from Qoder`,
+              `[QoderSync] Added ${newSessions.length} new sessions from Qoder`,
             );
           }
-        }, 1500);
+
+          // 2. 刷新已有 qoder 会话的消息（获取 tool events）
+          // 只刷新消息数 <= 30 的小会话，避免大会话刷新卡顿
+          const { refreshQoderSession } = await import("./qoder-sync");
+          const allSessions = useChatStore.getState().sessions;
+          const qoderSessionsToRefresh = allSessions.filter(
+            (s) =>
+              s.id?.startsWith("qoder-") &&
+              s.messages.length > 0 &&
+              s.messages.length <= 30,
+          );
+
+          console.log(
+            `[QoderSync] Refreshing ${qoderSessionsToRefresh.length} small qoder sessions for tool events...`,
+          );
+
+          for (const session of qoderSessionsToRefresh) {
+            const qoderId = session.id.slice(6);
+            console.log(
+              `[QoderSync] Refreshing session: ${qoderId} (${session.messages.length} messages)`,
+            );
+            const messages = await refreshQoderSession(session.id, 0);
+            if (messages && messages.length > 0) {
+              useChatStore.getState().updateTargetSession(session, (s) => {
+                s.messages = messages.map((m: any) =>
+                  createMessage({
+                    id: m.id,
+                    role: m.role as any,
+                    content: m.content,
+                    date: m.timestamp
+                      ? new Date(m.timestamp).toLocaleString()
+                      : new Date().toLocaleString(),
+                  }),
+                );
+                s.lastUpdate = Date.now();
+              });
+              console.log(
+                `[QoderSync] Refreshed session ${qoderId} with ${messages.length} messages`,
+              );
+            }
+          }
+        }, 3000);
 
         // 启动定期刷新机制：每 10 秒检查当前 Qoder session 是否有新消息
         setInterval(async () => {
@@ -1056,49 +1106,70 @@ export const useChatStore = createPersistStore(
                 console.log(
                   `[QoderSync] Auto-refreshing session ${currentSession.id}`,
                 );
+                const currentMsgCount = currentSession.messages.length;
                 const newMessages = await refreshQoderSession(
                   currentSession.id,
-                  currentSession.messages.length,
+                  currentMsgCount,
                 );
                 if (newMessages && newMessages.length > 0) {
                   state.updateTargetSession(currentSession, (s) => {
-                    // 增量更新：只添加新消息，避免整体闪烁
-                    const existingIds = new Set(
-                      s.messages.map((m) => m.id).filter(Boolean),
-                    );
-                    const existingLastMsg =
-                      s.messages.length > 0
-                        ? s.messages[s.messages.length - 1].content
-                        : "";
-
-                    // 找出真正新增的消息
-                    const trulyNewMessages = newMessages.filter((m: any) => {
-                      // 如果有 ID，用 ID 判断
-                      if (m.id && existingIds.has(m.id)) return false;
-                      // 如果是最后一条消息内容相同，跳过
-                      if (m.content === existingLastMsg) return false;
-                      return true;
-                    });
-
-                    if (trulyNewMessages.length > 0) {
-                      // 只追加新消息
-                      s.messages = [
-                        ...s.messages,
-                        ...trulyNewMessages.map((m: any) =>
-                          createMessage({
-                            id: m.id,
-                            role: m.role as any,
-                            content: m.content,
-                            date: m.timestamp
-                              ? new Date(m.timestamp).toLocaleString()
-                              : new Date().toLocaleString(),
-                          }),
-                        ),
-                      ];
+                    // 如果消息数少于100，使用全量替换（包含 tool events）
+                    // 否则使用增量更新
+                    if (currentMsgCount < 100) {
+                      // 全量替换：重新构建所有消息以显示 tool events
+                      s.messages = newMessages.map((m: any) =>
+                        createMessage({
+                          id: m.id,
+                          role: m.role as any,
+                          content: m.content,
+                          date: m.timestamp
+                            ? new Date(m.timestamp).toLocaleString()
+                            : new Date().toLocaleString(),
+                        }),
+                      );
                       s.lastUpdate = Date.now();
                       console.log(
-                        `[QoderSync] Appended ${trulyNewMessages.length} new messages`,
+                        `[QoderSync] Replaced all ${newMessages.length} messages (including tool events)`,
                       );
+                    } else {
+                      // 增量更新：只添加新消息，避免整体闪烁
+                      const existingIds = new Set(
+                        s.messages.map((m) => m.id).filter(Boolean),
+                      );
+                      const existingLastMsg =
+                        s.messages.length > 0
+                          ? s.messages[s.messages.length - 1].content
+                          : "";
+
+                      // 找出真正新增的消息
+                      const trulyNewMessages = newMessages.filter((m: any) => {
+                        // 如果有 ID，用 ID 判断
+                        if (m.id && existingIds.has(m.id)) return false;
+                        // 如果是最后一条消息内容相同，跳过
+                        if (m.content === existingLastMsg) return false;
+                        return true;
+                      });
+
+                      if (trulyNewMessages.length > 0) {
+                        // 只追加新消息
+                        s.messages = [
+                          ...s.messages,
+                          ...trulyNewMessages.map((m: any) =>
+                            createMessage({
+                              id: m.id,
+                              role: m.role as any,
+                              content: m.content,
+                              date: m.timestamp
+                                ? new Date(m.timestamp).toLocaleString()
+                                : new Date().toLocaleString(),
+                            }),
+                          ),
+                        ];
+                        s.lastUpdate = Date.now();
+                        console.log(
+                          `[QoderSync] Appended ${trulyNewMessages.length} new messages`,
+                        );
+                      }
                     }
                   });
                 }
