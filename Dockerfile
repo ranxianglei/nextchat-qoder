@@ -47,7 +47,7 @@ COPY --from=builder /app/app/mcp/mcp_config.default.json /app/app/mcp/mcp_config
 EXPOSE 3000
 
 CMD if [ -n "$PROXY_URL" ]; then \
-    export HOSTNAME="0.0.0.0"; \
+    export HOSTNAME="127.0.0.1"; \
     protocol=$(echo $PROXY_URL | cut -d: -f1); \
     host=$(echo $PROXY_URL | cut -d/ -f3 | cut -d: -f1); \
     port=$(echo $PROXY_URL | cut -d: -f3); \
@@ -64,5 +64,6 @@ CMD if [ -n "$PROXY_URL" ]; then \
     cat /etc/proxychains.conf; \
     proxychains -f $conf node server.js; \
     else \
+    export HOSTNAME="127.0.0.1"; \
     node server.js; \
     fi
