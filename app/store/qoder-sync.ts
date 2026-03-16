@@ -205,6 +205,7 @@ export async function deleteQoderSession(sessionId: string): Promise<boolean> {
 
 /**
  * 检查 session 是否需要刷新（消息数变化）
+ * 使用 transcript API 的 count_only 模式，轻量级获取处理后的真实消息数
  */
 export async function checkSessionNeedsRefresh(
   session: ChatSession,
@@ -213,11 +214,14 @@ export async function checkSessionNeedsRefresh(
 
   const qoderId = session.id.slice(6);
   try {
-    const sessions = await fetchQoderSessions();
-    const qoder = sessions.find((s) => s.id === qoderId);
-    if (!qoder) return false;
-
-    return session.messages.length !== qoder.message_count;
+    const url = `${BRIDGE_BASE_URL}/api/qoder-sessions/${encodeURIComponent(
+      qoderId,
+    )}/transcript?count_only=true`;
+    const res = await fetch(url);
+    if (!res.ok) return false;
+    const data = await res.json();
+    const serverTotal = data.total || 0;
+    return session.messages.length !== serverTotal;
   } catch (e) {
     return false;
   }
