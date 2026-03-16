@@ -7,7 +7,9 @@
 import { ChatSession, ChatMessage, createMessage } from "./chat";
 import { createEmptyMask } from "./mask";
 
-const BRIDGE_BASE_URL = "http://localhost:8080"; // bridge 地址
+// 使用 Next.js API 路由代理，避免跨域问题
+// 生产环境和开发环境都使用相对路径访问后端
+const API_BASE_URL = "/api";
 
 export interface QoderSession {
   id: string;
@@ -29,7 +31,7 @@ export interface QoderMessage {
  */
 export async function fetchQoderSessions(): Promise<QoderSession[]> {
   try {
-    const res = await fetch(`${BRIDGE_BASE_URL}/api/qoder-sessions`);
+    const res = await fetch(`${API_BASE_URL}/qoder-sessions`);
     if (!res.ok) return [];
     const data = await res.json();
     return data.sessions || [];
@@ -55,7 +57,7 @@ export async function fetchQoderTranscript(
     if (offset > 0) params.set("offset", String(offset));
     if (limit !== 0) params.set("limit", String(limit));
 
-    const url = `${BRIDGE_BASE_URL}/api/qoder-sessions/${encodeURIComponent(
+    const url = `${API_BASE_URL}/qoder-sessions/${encodeURIComponent(
       sessionId,
     )}/transcript?${params.toString()}`;
     const res = await fetch(url);
@@ -191,7 +193,7 @@ export async function deleteQoderSession(sessionId: string): Promise<boolean> {
   const qoderId = sessionId.slice(6);
   try {
     const res = await fetch(
-      `${BRIDGE_BASE_URL}/api/qoder-sessions/${encodeURIComponent(qoderId)}`,
+      `${API_BASE_URL}/qoder-sessions/${encodeURIComponent(qoderId)}`,
       {
         method: "DELETE",
       },
@@ -214,7 +216,7 @@ export async function checkSessionNeedsRefresh(
 
   const qoderId = session.id.slice(6);
   try {
-    const url = `${BRIDGE_BASE_URL}/api/qoder-sessions/${encodeURIComponent(
+    const url = `${API_BASE_URL}/qoder-sessions/${encodeURIComponent(
       qoderId,
     )}/transcript?count_only=true`;
     const res = await fetch(url);
