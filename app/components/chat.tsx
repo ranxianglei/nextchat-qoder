@@ -1034,6 +1034,9 @@ function _Chat() {
   const [attachImages, setAttachImages] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
 
+  // Track if older messages are being loaded (prevent duplicate requests)
+  const isLoadingOlder = useRef(false);
+
   // prompt hints
   const promptStore = usePromptStore();
   const [promptHints, setPromptHints] = useState<RenderPrompt[]>([]);
@@ -1171,6 +1174,13 @@ function _Chat() {
         session.mask.modelConfig = { ...config.modelConfig };
       }
     });
+
+    // 当切换会话时，自动滚动到最后一条消息
+    // 这样可以确保打开长会话时直接显示最新消息
+    setTimeout(() => {
+      scrollToBottom();
+    }, 100);
+
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
 
@@ -1414,7 +1424,58 @@ function _Chat() {
     const nextPageMsgIndex = msgRenderIndex + CHAT_PAGE_SIZE;
 
     if (isTouchTopEdge && !isTouchBottomEdge) {
-      setMsgRenderIndex(prevPageMsgIndex);
+      // 滚动到顶部时，尝试加载更早的消息
+      if (prevPageMsgIndex < 0 && session.id.startsWith("qoder-")) {
+        // 已经显示到第一条消息了，需要加载更多历史消息
+        const loadedCount = renderMessages.length;
+        console.log(
+          `[Chat] Loading older messages, already loaded ${loadedCount} messages`,
+        );
+
+        // 防止重复加载
+        if (!isLoadingOlder.current) {
+          isLoadingOlder.current = true;
+
+          import("../store/qoder-sync").then(({ loadOlderMessages }) => {
+            loadOlderMessages(session.id, loadedCount, CHAT_PAGE_SIZE)
+              .then((olderMessages) => {
+                isLoadingOlder.current = false;
+
+                if (olderMessages && olderMessages.length > 0) {
+                  // 将更早的消息插入到当前消息列表前面
+                  chatStore.updateTargetSession(session, (s) => {
+                    const newMessages = olderMessages
+                      .map((m) =>
+                        createMessage({
+                          role: m.role as any,
+                          content: m.content,
+                        }),
+                      )
+                      .concat(s.messages);
+                    s.messages = newMessages;
+                  });
+
+                  // 调整渲染索引，保持视觉位置不变
+                  setTimeout(() => {
+                    setMsgRenderIndex(prevPageMsgIndex + olderMessages.length);
+                    // 保持滚动位置
+                    e.scrollTop = olderMessages.length * 50; // 估算高度
+                  }, 0);
+
+                  console.log(
+                    `[Chat] Loaded ${olderMessages.length} older messages`,
+                  );
+                }
+              })
+              .catch((err) => {
+                isLoadingOlder.current = false;
+                console.error("[Chat] Failed to load older messages:", err);
+              });
+          });
+        }
+      } else {
+        setMsgRenderIndex(prevPageMsgIndex);
+      }
     } else if (isTouchBottomEdge) {
       setMsgRenderIndex(nextPageMsgIndex);
     }

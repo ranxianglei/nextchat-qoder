@@ -136,13 +136,13 @@ export async function syncQoderSessions(
   for (const qoder of toImport) {
     if (qoder.has_transcript) {
       // 对于消息数少的会话，获取完整消息（包含 tool events）
-      // 对于消息数多的会话，限制为 100 条
-      const limit = qoder.message_count <= 100 ? 0 : 100;
+      // 对于消息数多的会话，限制为最后 100 条（显示最新消息）
+      const limit = qoder.message_count <= 100 ? 0 : -100;
       const { messages } = await fetchQoderTranscript(qoder.id, 0, limit);
       const session = convertQoderToChatSession(qoder, messages);
       newSessions.push(session);
       console.log(
-        `[QoderSync] Imported session: ${qoder.title} (${messages.length} messages)`,
+        `[QoderSync] Imported session: ${qoder.title} (${messages.length} messages, total: ${qoder.message_count})`,
       );
     }
   }
@@ -166,22 +166,64 @@ export async function refreshQoderSession(
   // 大于 30 的使用增量刷新
   const useFullRefresh = currentMessageCount <= 30;
 
+  // 全量刷新：获取最后 100 条（避免一次性加载过多）
+  // 增量刷新：从当前消息数开始，获取新增的
+  const limit = useFullRefresh ? -100 : 0;
+  const offset = useFullRefresh ? 0 : currentMessageCount;
+
   const { messages, total } = await fetchQoderTranscript(
     qoderId,
-    useFullRefresh ? 0 : currentMessageCount, // 全量或增量
-    0, // 不限制数量
+    offset,
+    limit,
   );
 
   console.log(
-    `[QoderSync] Refreshed session ${qoderId}: got ${
-      messages.length
-    } messages (mode: ${
-      useFullRefresh ? "full" : "incremental"
-    }), total ${total}`,
+    `[QoderSync] Refreshed session ${qoderId}: got ${messages.length} messages (offset: ${offset}, limit: ${limit}), total ${total}`,
   );
 
   // 返回消息（如果是全量刷新，返回全部；如果是增量，返回新消息）
   return messages;
+}
+
+/**
+ * 加载更早的消息（向上滚动时触发）
+ * @param sessionId 会话 ID
+ * @param loadedCount 已加载的消息数量（从最新消息往前数）
+ * @param pageSize 每次加载的数量
+ * @returns 更早的消息列表（按时间正序排列）
+ */
+export async function loadOlderMessages(
+  sessionId: string,
+  loadedCount: number,
+  pageSize: number = 100,
+): Promise<QoderMessage[] | null> {
+  if (!sessionId.startsWith("qoder-")) return null;
+
+  const qoderId = sessionId.slice(6);
+  const offset = loadedCount; // 跳过已加载的最新 N 条
+  const limit = -pageSize; // 获取之前的 N 条（负数表示倒数）
+
+  try {
+    const { messages, total } = await fetchQoderTranscript(
+      qoderId,
+      offset,
+      limit,
+    );
+
+    console.log(
+      `[QoderSync] Loaded older messages for ${qoderId}: got ${messages.length} messages (offset: ${offset}, limit: ${limit}), total ${total}`,
+    );
+
+    // 如果没有更多消息，返回空数组
+    if (messages.length === 0 || offset >= total) {
+      return [];
+    }
+
+    return messages;
+  } catch (e) {
+    console.warn("[QoderSync] Failed to load older messages:", e);
+    return null;
+  }
 }
 
 /**

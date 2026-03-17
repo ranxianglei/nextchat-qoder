@@ -10,6 +10,10 @@ import { NextResponse } from "next/server";
 const QODERCLAW_BASE_URL =
   process.env.QODERCLAW_INTERNAL_URL || "http://localhost:8080";
 
+// QoderClaw API Key（从环境变量读取，用于后端鉴权）
+const QODERCLAW_API_KEY =
+  process.env.QODERCLAW_API_KEY || "sk-qoderclaw-default-key";
+
 export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
@@ -24,11 +28,21 @@ export async function GET(request: Request) {
       method: "GET",
       headers: {
         "Content-Type": "application/json",
+        Authorization: `Bearer ${QODERCLAW_API_KEY}`,
       },
     });
 
     if (!response.ok) {
       console.error("[QoderProxy] Backend returned error:", response.status);
+
+      // 特殊处理 401 鉴权错误
+      if (response.status === 401) {
+        return NextResponse.json(
+          { error: "Authentication failed", message: "Invalid API key" },
+          { status: 401 },
+        );
+      }
+
       return NextResponse.json(
         { error: "Failed to fetch from QoderClaw", status: response.status },
         { status: response.status },
@@ -71,10 +85,23 @@ export async function DELETE(request: Request) {
 
     const response = await fetch(targetUrl, {
       method: "DELETE",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${QODERCLAW_API_KEY}`,
+      },
     });
 
     if (!response.ok) {
       console.error("[QoderProxy] Backend returned error:", response.status);
+
+      // 特殊处理 401 鉴权错误
+      if (response.status === 401) {
+        return NextResponse.json(
+          { error: "Authentication failed", message: "Invalid API key" },
+          { status: 401 },
+        );
+      }
+
       return NextResponse.json(
         { error: "Failed to delete session", status: response.status },
         { status: response.status },
